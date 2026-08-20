@@ -22,6 +22,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Leaderboard
 import androidx.compose.material.icons.filled.ShowChart
 import androidx.compose.material.icons.filled.TrendingUp
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -53,6 +54,7 @@ import com.example.data.NseViewModel
 import com.example.data.NseViewModelFactory
 import com.example.ui.screens.CsvImportScreen
 import com.example.ui.screens.DashboardScreen
+import com.example.ui.screens.GainersLosersScreen
 import com.example.ui.screens.InsightsScreen
 import com.example.ui.screens.TrendAnalyticsScreen
 import com.example.ui.theme.NavyBackground
@@ -115,12 +117,24 @@ fun MainAppContent(viewModel: NseViewModel, isDarkTheme: Boolean) {
     val filteredInsights by viewModel.filteredInsights.collectAsStateWithLifecycle()
     val selectedInsightCategory by viewModel.selectedInsightCategory.collectAsStateWithLifecycle()
     val importStatus by viewModel.importStatus.collectAsStateWithLifecycle()
-    val compareDate1 by viewModel.compareDate1.collectAsStateWithLifecycle()
-    val compareDate2 by viewModel.compareDate2.collectAsStateWithLifecycle()
 
     val allWatchlists by viewModel.allWatchlists.collectAsStateWithLifecycle()
     val allWatchlistItems by viewModel.allWatchlistItems.collectAsStateWithLifecycle()
     val selectedWatchlistId by viewModel.selectedWatchlistId.collectAsStateWithLifecycle()
+
+    // Live Streaming State
+    val isAutoRefreshEnabled by viewModel.isAutoRefreshEnabled.collectAsStateWithLifecycle()
+    val refreshIntervalSeconds by viewModel.refreshIntervalSeconds.collectAsStateWithLifecycle()
+    val isLiveUpdating by viewModel.isLiveUpdating.collectAsStateWithLifecycle()
+    val lastLiveUpdateTime by viewModel.lastLiveUpdateTime.collectAsStateWithLifecycle()
+    val liveIndices by viewModel.liveIndices.collectAsStateWithLifecycle()
+    val liveMarketStatus by viewModel.liveMarketStatus.collectAsStateWithLifecycle()
+    val secondsUntilNextRefresh by viewModel.secondsUntilNextRefresh.collectAsStateWithLifecycle()
+
+    // New Listed Company News State
+    val newListingsNews by viewModel.newListingsNews.collectAsStateWithLifecycle()
+    val ipoDebutTrackers by viewModel.ipoDebutTrackers.collectAsStateWithLifecycle()
+    val isFetchingNews by viewModel.isFetchingNews.collectAsStateWithLifecycle()
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -197,8 +211,23 @@ fun MainAppContent(viewModel: NseViewModel, isDarkTheme: Boolean) {
                 NavigationBarItem(
                     selected = selectedTab == 1,
                     onClick = { selectedTab = 1 },
+                    icon = { Icon(Icons.Default.Leaderboard, contentDescription = "Movers") },
+                    label = { Text("Movers", fontSize = 10.sp, fontWeight = if (selectedTab == 1) FontWeight.Bold else FontWeight.Normal) },
+                    colors = NavigationBarItemDefaults.colors(
+                        selectedIconColor = MaterialTheme.colorScheme.onPrimary,
+                        selectedTextColor = MaterialTheme.colorScheme.primary,
+                        indicatorColor = MaterialTheme.colorScheme.primary,
+                        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    ),
+                    modifier = Modifier.testTag("nav_tab_movers")
+                )
+
+                NavigationBarItem(
+                    selected = selectedTab == 2,
+                    onClick = { selectedTab = 2 },
                     icon = { Icon(Icons.Default.TrendingUp, contentDescription = "Trends") },
-                    label = { Text("Trends", fontSize = 10.sp, fontWeight = if (selectedTab == 1) FontWeight.Bold else FontWeight.Normal) },
+                    label = { Text("Trends", fontSize = 10.sp, fontWeight = if (selectedTab == 2) FontWeight.Bold else FontWeight.Normal) },
                     colors = NavigationBarItemDefaults.colors(
                         selectedIconColor = MaterialTheme.colorScheme.onPrimary,
                         selectedTextColor = MaterialTheme.colorScheme.primary,
@@ -210,10 +239,10 @@ fun MainAppContent(viewModel: NseViewModel, isDarkTheme: Boolean) {
                 )
 
                 NavigationBarItem(
-                    selected = selectedTab == 2,
-                    onClick = { selectedTab = 2 },
+                    selected = selectedTab == 3,
+                    onClick = { selectedTab = 3 },
                     icon = { Icon(Icons.Default.Star, contentDescription = "Watchlists") },
-                    label = { Text("Watchlist", fontSize = 10.sp, fontWeight = if (selectedTab == 2) FontWeight.Bold else FontWeight.Normal) },
+                    label = { Text("Watchlist", fontSize = 10.sp, fontWeight = if (selectedTab == 3) FontWeight.Bold else FontWeight.Normal) },
                     colors = NavigationBarItemDefaults.colors(
                         selectedIconColor = MaterialTheme.colorScheme.onPrimary,
                         selectedTextColor = MaterialTheme.colorScheme.primary,
@@ -225,10 +254,10 @@ fun MainAppContent(viewModel: NseViewModel, isDarkTheme: Boolean) {
                 )
 
                 NavigationBarItem(
-                    selected = selectedTab == 3,
-                    onClick = { selectedTab = 3 },
-                    icon = { Icon(Icons.Default.AutoAwesome, contentDescription = "Insights") },
-                    label = { Text("Insights", fontSize = 10.sp, fontWeight = if (selectedTab == 3) FontWeight.Bold else FontWeight.Normal) },
+                    selected = selectedTab == 4,
+                    onClick = { selectedTab = 4 },
+                    icon = { Icon(Icons.Default.AutoAwesome, contentDescription = "News & IPOs") },
+                    label = { Text("News & IPOs", fontSize = 10.sp, fontWeight = if (selectedTab == 4) FontWeight.Bold else FontWeight.Normal) },
                     colors = NavigationBarItemDefaults.colors(
                         selectedIconColor = MaterialTheme.colorScheme.onPrimary,
                         selectedTextColor = MaterialTheme.colorScheme.primary,
@@ -240,10 +269,10 @@ fun MainAppContent(viewModel: NseViewModel, isDarkTheme: Boolean) {
                 )
 
                 NavigationBarItem(
-                    selected = selectedTab == 4,
-                    onClick = { selectedTab = 4 },
+                    selected = selectedTab == 5,
+                    onClick = { selectedTab = 5 },
                     icon = { Icon(Icons.Default.FolderOpen, contentDescription = "CSV Data") },
-                    label = { Text("CSV Import", fontSize = 10.sp, fontWeight = if (selectedTab == 4) FontWeight.Bold else FontWeight.Normal) },
+                    label = { Text("CSV Import", fontSize = 10.sp, fontWeight = if (selectedTab == 5) FontWeight.Bold else FontWeight.Normal) },
                     colors = NavigationBarItemDefaults.colors(
                         selectedIconColor = MaterialTheme.colorScheme.onPrimary,
                         selectedTextColor = MaterialTheme.colorScheme.primary,
@@ -275,32 +304,54 @@ fun MainAppContent(viewModel: NseViewModel, isDarkTheme: Boolean) {
                     watchlists = allWatchlists,
                     watchlistItems = allWatchlistItems,
                     selectedWatchlistId = selectedWatchlistId,
+                    isAutoRefreshEnabled = isAutoRefreshEnabled,
+                    refreshIntervalSeconds = refreshIntervalSeconds,
+                    isLiveUpdating = isLiveUpdating,
+                    lastLiveUpdateTime = lastLiveUpdateTime,
+                    liveIndices = liveIndices,
+                    liveMarketStatus = liveMarketStatus,
+                    secondsUntilNextRefresh = secondsUntilNextRefresh,
+                    onToggleAutoRefresh = { viewModel.toggleAutoRefresh(it) },
+                    onSetRefreshInterval = { viewModel.setRefreshInterval(it) },
+                    onRefreshLiveNow = { viewModel.fetchLiveNseData() },
                     onDateSelected = { viewModel.selectDate(it) },
                     onDateRangeSelected = { start, end -> viewModel.setDateRange(start, end) },
                     onClearDateRange = { viewModel.toggleDateRangeActive(false) },
                     onSelectWatchlist = { viewModel.selectWatchlist(it) },
                     onSymbolClick = {
                         viewModel.selectSymbol(it)
-                        selectedTab = 1
+                        selectedTab = 2
                     },
                     onBookmarkToggle = { id, cur -> viewModel.toggleBookmark(id, cur) },
-                    onNavigateToInsights = { selectedTab = 3 },
-                    onNavigateToWatchlists = { selectedTab = 2 }
+                    onNavigateToInsights = { selectedTab = 4 },
+                    onNavigateToWatchlists = { selectedTab = 3 },
+                    onNavigateToGainersLosers = { selectedTab = 1 },
+                    newListingsNews = newListingsNews,
+                    onNavigateToNews = { selectedTab = 4 }
                 )
 
-                1 -> TrendAnalyticsScreen(
+                1 -> GainersLosersScreen(
+                    selectedDate = selectedDate,
+                    availableSymbols = availableSymbols,
+                    allStockRecords = allStockRecords,
+                    dailySummary = dailySummary,
+                    onSymbolSelected = { viewModel.selectSymbol(it) },
+                    onNavigateToTrends = { sym ->
+                        viewModel.selectSymbol(sym)
+                        selectedTab = 2
+                    }
+                )
+
+                2 -> TrendAnalyticsScreen(
                     selectedSymbol = selectedSymbol,
                     availableSymbols = availableSymbols,
                     availableDates = availableDates,
                     recordsForSymbol = recordsForSelectedSymbol,
                     allStockRecords = allStockRecords,
-                    compareDate1 = compareDate1,
-                    compareDate2 = compareDate2,
-                    onSymbolSelected = { viewModel.selectSymbol(it) },
-                    onCompareDatesChanged = { d1, d2 -> viewModel.setCompareDates(d1, d2) }
+                    onSymbolSelected = { viewModel.selectSymbol(it) }
                 )
 
-                2 -> WatchlistsScreen(
+                3 -> WatchlistsScreen(
                     watchlists = allWatchlists,
                     watchlistItems = allWatchlistItems,
                     availableSymbols = availableSymbols,
@@ -312,15 +363,19 @@ fun MainAppContent(viewModel: NseViewModel, isDarkTheme: Boolean) {
                     onDeleteWatchlist = { viewModel.deleteWatchlist(it) },
                     onSymbolClick = {
                         viewModel.selectSymbol(it)
-                        selectedTab = 1
+                        selectedTab = 2
                     }
                 )
 
-                3 -> InsightsScreen(
+                4 -> InsightsScreen(
                     insights = filteredInsights,
                     selectedCategory = selectedInsightCategory,
                     selectedDate = selectedDate,
                     availableSymbols = availableSymbols,
+                    newListingsNews = newListingsNews,
+                    ipoDebutTrackers = ipoDebutTrackers,
+                    isFetchingNews = isFetchingNews,
+                    onRefreshNews = { viewModel.fetchNewListingsNews() },
                     onCategorySelected = { viewModel.setInsightCategory(it) },
                     onBookmarkToggle = { id, cur -> viewModel.toggleBookmark(id, cur) },
                     onDeleteInsight = { viewModel.deleteInsight(it) },
@@ -329,11 +384,11 @@ fun MainAppContent(viewModel: NseViewModel, isDarkTheme: Boolean) {
                     },
                     onSymbolClick = {
                         viewModel.selectSymbol(it)
-                        selectedTab = 1
+                        selectedTab = 2
                     }
                 )
 
-                4 -> CsvImportScreen(
+                5 -> CsvImportScreen(
                     importStatus = importStatus,
                     allStockRecords = allStockRecords,
                     recordsForSelectedDate = recordsForSelectedDate,

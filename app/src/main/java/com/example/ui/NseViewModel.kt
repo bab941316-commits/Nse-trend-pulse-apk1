@@ -13,6 +13,8 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import java.io.BufferedReader
 import java.io.InputStreamReader
 
@@ -25,9 +27,116 @@ sealed interface ImportStatus {
 
 class NseViewModel(private val repository: NseRepository) : ViewModel() {
 
+    // --- Live Market & Auto-Refresh State (60s Coroutine Polling Ticker) ---
+    private val _isAutoRefreshEnabled = MutableStateFlow(true)
+    val isAutoRefreshEnabled: StateFlow<Boolean> = _isAutoRefreshEnabled.asStateFlow()
+
+    private val _refreshIntervalSeconds = MutableStateFlow(60) // Default: 60s background polling ticker
+    val refreshIntervalSeconds: StateFlow<Int> = _refreshIntervalSeconds.asStateFlow()
+
+    private val _isLiveUpdating = MutableStateFlow(false)
+    val isLiveUpdating: StateFlow<Boolean> = _isLiveUpdating.asStateFlow()
+
+    private val _lastLiveUpdateTime = MutableStateFlow("")
+    val lastLiveUpdateTime: StateFlow<String> = _lastLiveUpdateTime.asStateFlow()
+
+    private val _liveIndices = MutableStateFlow<List<LiveIndexQuote>>(emptyList())
+    val liveIndices: StateFlow<List<LiveIndexQuote>> = _liveIndices.asStateFlow()
+
+    private val _liveMarketStatus = MutableStateFlow("Initializing Live Feed...")
+    val liveMarketStatus: StateFlow<String> = _liveMarketStatus.asStateFlow()
+
+    private val _secondsUntilNextRefresh = MutableStateFlow(60)
+    val secondsUntilNextRefresh: StateFlow<Int> = _secondsUntilNextRefresh.asStateFlow()
+
+    // --- New Listed Company News & IPO Trackers ---
+    private val _newListingsNews = MutableStateFlow<List<NewListedCompanyNewsItem>>(NseNewListingsService.getInitialCuratedNews())
+    val newListingsNews: StateFlow<List<NewListedCompanyNewsItem>> = _newListingsNews.asStateFlow()
+
+    private val _ipoDebutTrackers = MutableStateFlow<List<IpoDebutTrackRecord>>(NseNewListingsService.curatedIpoDebutRecords)
+    val ipoDebutTrackers: StateFlow<List<IpoDebutTrackRecord>> = _ipoDebutTrackers.asStateFlow()
+
+    private val _isFetchingNews = MutableStateFlow(false)
+    val isFetchingNews: StateFlow<Boolean> = _isFetchingNews.asStateFlow()
+
     init {
         viewModelScope.launch {
             repository.loadSampleDataIfNeeded()
+            // Initial live sync on startup
+            fetchLiveNseData()
+            fetchNewListingsNews()
+        }
+
+        // Background Polling Mechanism: 1-second interval ticker managing 60s cycle
+        viewModelScope.launch {
+            while (isActive) {
+                delay(1000L)
+                if (_isAutoRefreshEnabled.value && !_isLiveUpdating.value) {
+                    val remaining = _secondsUntilNextRefresh.value - 1
+                    if (remaining <= 0) {
+                        _secondsUntilNextRefresh.value = _refreshIntervalSeconds.value
+                        fetchLiveNseData()
+                    } else {
+                        _secondsUntilNextRefresh.value = remaining
+                    }
+                }
+            }
+        }
+    }
+
+    fun toggleAutoRefresh(enabled: Boolean? = null) {
+        val next = enabled ?: !_isAutoRefreshEnabled.value
+        _isAutoRefreshEnabled.value = next
+        if (next) {
+            _secondsUntilNextRefresh.value = _refreshIntervalSeconds.value
+        }
+    }
+
+    fun setRefreshInterval(seconds: Int) {
+        _refreshIntervalSeconds.value = seconds
+        _secondsUntilNextRefresh.value = seconds
+    }
+
+    fun fetchLiveNseData() {
+        viewModelScope.launch {
+            _isLiveUpdating.value = true
+            _liveMarketStatus.value = "Fetching live NSE quotes..."
+            try {
+                // Collect any watchlist symbols to also fetch live
+                val watchlistSymbols = repository.allWatchlistItems.first().map { it.symbol }
+                val result = repository.fetchAndSyncLiveNseData(watchlistSymbols)
+                _liveIndices.value = result.indices
+                _lastLiveUpdateTime.value = result.timestamp
+                _liveMarketStatus.value = result.message
+                _secondsUntilNextRefresh.value = _refreshIntervalSeconds.value
+
+                // If today's date was just synced, select today
+                val todayStr = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date())
+                val dates = repository.availableDates.first()
+                if (dates.contains(todayStr) && _selectedDate.value.isEmpty()) {
+                    _selectedDate.value = todayStr
+                }
+            } catch (e: Exception) {
+                _liveMarketStatus.value = "Live feed fallback active"
+            } finally {
+                _isLiveUpdating.value = false
+            }
+        }
+    }
+
+    fun fetchNewListingsNews() {
+        viewModelScope.launch {
+            _isFetchingNews.value = true
+            try {
+                val liveNews = NseNewListingsService.fetchLiveIpoNews()
+                if (liveNews.isNotEmpty()) {
+                    _newListingsNews.value = liveNews
+                }
+            } catch (e: Exception) {
+                // Keep existing curated list
+            } finally {
+                _isFetchingNews.value = false
+            }
         }
     }
 
@@ -83,13 +192,6 @@ class NseViewModel(private val repository: NseRepository) : ViewModel() {
     private val _selectedWatchlistId = MutableStateFlow<Long?>(null)
     val selectedWatchlistId: StateFlow<Long?> = _selectedWatchlistId.asStateFlow()
 
-    // Compare Dates State
-    private val _compareDate1 = MutableStateFlow("")
-    val compareDate1: StateFlow<String> = _compareDate1.asStateFlow()
-
-    private val _compareDate2 = MutableStateFlow("")
-    val compareDate2: StateFlow<String> = _compareDate2.asStateFlow()
-
     // Auto-select initial date & date range when available
     init {
         viewModelScope.launch {
@@ -100,13 +202,6 @@ class NseViewModel(private val repository: NseRepository) : ViewModel() {
                         _selectedDate.value = sortedDates.last()
                         _startDateRange.value = sortedDates.first()
                         _endDateRange.value = sortedDates.last()
-                        if (sortedDates.size >= 2) {
-                            _compareDate1.value = sortedDates[sortedDates.size - 2]
-                            _compareDate2.value = sortedDates.last()
-                        } else {
-                            _compareDate1.value = sortedDates.last()
-                            _compareDate2.value = sortedDates.last()
-                        }
                     }
                 }
             }
@@ -246,11 +341,6 @@ class NseViewModel(private val repository: NseRepository) : ViewModel() {
 
     fun setSearchQuery(query: String) {
         _searchQuery.value = query
-    }
-
-    fun setCompareDates(d1: String, d2: String) {
-        _compareDate1.value = d1
-        _compareDate2.value = d2
     }
 
     fun toggleBookmark(id: Long, current: Boolean) {

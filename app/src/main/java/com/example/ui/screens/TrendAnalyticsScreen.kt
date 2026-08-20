@@ -18,7 +18,6 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CompareArrows
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -44,6 +43,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.NseStockRecord
+import com.example.ui.components.NseMarketStatusBadge
+import com.example.ui.components.NseMarketStatusCard
 import com.example.ui.components.StockTrendLineChart
 import com.example.ui.theme.AccentGold
 import com.example.ui.theme.BearishRed
@@ -64,10 +65,7 @@ fun TrendAnalyticsScreen(
     availableDates: List<String>,
     recordsForSymbol: List<NseStockRecord>,
     allStockRecords: List<NseStockRecord>,
-    compareDate1: String,
-    compareDate2: String,
-    onSymbolSelected: (String) -> Unit,
-    onCompareDatesChanged: (String, String) -> Unit
+    onSymbolSelected: (String) -> Unit
 ) {
     var symbolDropdownExpanded by remember { mutableStateOf(false) }
     var symbolSearchText by remember { mutableStateOf("") }
@@ -189,8 +187,15 @@ fun TrendAnalyticsScreen(
             )
         }
 
-        // Key Stats Summary Card for Selected Symbol
+        // Market Timing and Trend Interpretation Context
         val latestRecord = recordsForSymbol.lastOrNull()
+        item {
+            NseMarketStatusCard(
+                lastFetchedTimestamp = latestRecord?.date
+            )
+        }
+
+        // Key Stats Summary Card for Selected Symbol
         latestRecord?.let { rec ->
             item {
                 Card(
@@ -214,112 +219,6 @@ fun TrendAnalyticsScreen(
                             StatPill(label = "Prev Close", value = "₹${rec.prevClose}")
                             StatPill(label = "Delivery %", value = "${String.format("%.1f", rec.pctDlyQtToTrd)}%")
                         }
-                    }
-                }
-            }
-        }
-
-        // Date-over-Date Comparison Tool
-        item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = NavySurface),
-                border = CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(NavyCardBorder)),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.CompareArrows, contentDescription = null, tint = AccentGold)
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Date-over-Date Performance Comparison", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    // Date Selectors
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("Base Date T1", color = TextMuted, fontSize = 10.sp)
-                            Spacer(modifier = Modifier.height(4.dp))
-                            DateChipSelector(
-                                currentDate = compareDate1,
-                                availableDates = availableDates,
-                                onSelect = { onCompareDatesChanged(it, compareDate2) }
-                            )
-                        }
-
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("Comparison Date T2", color = TextMuted, fontSize = 10.sp)
-                            Spacer(modifier = Modifier.height(4.dp))
-                            DateChipSelector(
-                                currentDate = compareDate2,
-                                availableDates = availableDates,
-                                onSelect = { onCompareDatesChanged(compareDate1, it) }
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    // Perform comparison for current symbol
-                    val recordT1 = allStockRecords.find { it.symbol == selectedSymbol && it.date == compareDate1 }
-                    val recordT2 = allStockRecords.find { it.symbol == selectedSymbol && it.date == compareDate2 }
-
-                    if (recordT1 != null && recordT2 != null) {
-                        val priceDiff = recordT2.close - recordT1.close
-                        val priceDiffPct = if (recordT1.close > 0) (priceDiff / recordT1.close) * 100.0 else 0.0
-                        val isUp = priceDiff >= 0
-                        val diffColor = if (isUp) BullishGreen else BearishRed
-
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(NavySurfaceVariant, RoundedCornerShape(12.dp))
-                                .padding(12.dp)
-                        ) {
-                            Column {
-                                Text(
-                                    text = "$selectedSymbol Performance ($compareDate1 → $compareDate2)",
-                                    color = TextSecondary,
-                                    fontSize = 11.sp
-                                )
-                                Spacer(modifier = Modifier.height(6.dp))
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column {
-                                        Text("Price on $compareDate1: ₹${recordT1.close}", color = TextPrimary, fontSize = 12.sp)
-                                        Text("Price on $compareDate2: ₹${recordT2.close}", color = TextPrimary, fontSize = 12.sp)
-                                    }
-
-                                    Column(horizontalAlignment = Alignment.End) {
-                                        Text(
-                                            text = "${if (isUp) "+" else ""}₹${String.format("%.2f", priceDiff)}",
-                                            color = diffColor,
-                                            fontSize = 14.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                        Text(
-                                            text = "(${if (isUp) "+" else ""}${String.format("%.2f", priceDiffPct)}%)",
-                                            color = diffColor,
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        Text("Select valid dates to compare performance", color = TextMuted, fontSize = 11.sp)
                     }
                 }
             }
@@ -390,43 +289,6 @@ private fun StatPill(label: String, value: String) {
     Column {
         Text(label, color = TextMuted, fontSize = 10.sp)
         Text(value, color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-    }
-}
-
-@Composable
-private fun DateChipSelector(
-    currentDate: String,
-    availableDates: List<String>,
-    onSelect: (String) -> Unit
-) {
-    var expanded by remember { mutableStateOf(false) }
-
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .background(NavySurfaceVariant)
-            .border(1.dp, NavyCardBorder, RoundedCornerShape(8.dp))
-            .clickable { expanded = true }
-            .padding(vertical = 8.dp, horizontal = 12.dp)
-    ) {
-        Text(currentDate.ifEmpty { "Select Date" }, color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-
-        androidx.compose.material3.DropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false },
-            modifier = Modifier.background(NavySurface)
-        ) {
-            availableDates.forEach { d ->
-                DropdownMenuItem(
-                    text = { Text(d, color = TextPrimary) },
-                    onClick = {
-                        onSelect(d)
-                        expanded = false
-                    }
-                )
-            }
-        }
     }
 }
 

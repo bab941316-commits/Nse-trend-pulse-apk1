@@ -1,6 +1,12 @@
 package com.example.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -28,13 +34,17 @@ import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Leaderboard
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.ShowChart
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.TrendingDown
 import androidx.compose.material.icons.filled.TrendingUp
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -42,6 +52,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.PrimaryTabRow
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -53,6 +65,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -61,12 +74,17 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.DailyMarketSummary
 import com.example.data.DateRangeMarketSummary
+import com.example.data.LiveIndexQuote
 import com.example.data.MarketInsight
+import com.example.data.NewListedCompanyNewsItem
 import com.example.data.NseStockRecord
 import com.example.data.WatchlistEntity
 import com.example.data.WatchlistItemEntity
 import com.example.ui.components.DateRangePickerComponent
 import com.example.ui.components.MarketBreadthBar
+import com.example.ui.components.MarketSentimentIndicator
+import com.example.ui.components.NseMarketStatusBadge
+import com.example.ui.components.NseMarketStatusCard
 import com.example.ui.components.StockTrendLineChart
 import com.example.ui.theme.AccentGold
 import com.example.ui.theme.BearishRed
@@ -105,6 +123,17 @@ fun DashboardScreen(
     watchlists: List<WatchlistEntity>,
     watchlistItems: List<WatchlistItemEntity> = emptyList(),
     selectedWatchlistId: Long?,
+    // Live NSE Streaming parameters
+    isAutoRefreshEnabled: Boolean = true,
+    refreshIntervalSeconds: Int = 15,
+    isLiveUpdating: Boolean = false,
+    lastLiveUpdateTime: String = "",
+    liveIndices: List<LiveIndexQuote> = emptyList(),
+    liveMarketStatus: String = "",
+    secondsUntilNextRefresh: Int = 15,
+    onToggleAutoRefresh: (Boolean) -> Unit = {},
+    onSetRefreshInterval: (Int) -> Unit = {},
+    onRefreshLiveNow: () -> Unit = {},
     onDateSelected: (String) -> Unit,
     onDateRangeSelected: (start: String, end: String) -> Unit,
     onClearDateRange: () -> Unit,
@@ -112,13 +141,38 @@ fun DashboardScreen(
     onSymbolClick: (String) -> Unit,
     onBookmarkToggle: (Long, Boolean) -> Unit,
     onNavigateToInsights: () -> Unit,
-    onNavigateToWatchlists: () -> Unit
+    onNavigateToWatchlists: () -> Unit,
+    onNavigateToGainersLosers: () -> Unit = {},
+    newListingsNews: List<NewListedCompanyNewsItem> = emptyList(),
+    onNavigateToNews: () -> Unit = {}
 ) {
     var gainersTabSelected by remember { mutableIntStateOf(0) } // 0: Gainers, 1: Losers, 2: High Volume
     var searchQuery by remember { mutableStateOf("") }
     var activeSortMode by remember { mutableStateOf(DashboardSortMode.PERFORMANCE) }
     var isSortDescending by remember { mutableStateOf(true) }
     var showAllSearchResults by remember { mutableStateOf(false) }
+
+    // Live Pulse Animation
+    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+    val pulseAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.3f,
+        targetValue = 1.0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(900, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "pulseAlpha"
+    )
+
+    val spinAngle by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1200, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "spinAngle"
+    )
 
     val filteredAndSortedStockList = remember(
         allStockRecords,
@@ -203,6 +257,206 @@ fun DashboardScreen(
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         item { Spacer(modifier = Modifier.height(8.dp)) }
+
+        // --- Live NSE Streaming Control Card ---
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("live_nse_control_card"),
+                colors = CardDefaults.cardColors(containerColor = NavySurface),
+                border = CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(if (isAutoRefreshEnabled) PrimaryCyan.copy(alpha = 0.5f) else NavyCardBorder)),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            // Pulsing Live Indicator
+                            Box(
+                                modifier = Modifier
+                                    .size(12.dp)
+                                    .background(
+                                        if (isAutoRefreshEnabled) BullishGreen.copy(alpha = pulseAlpha) else AccentGold,
+                                        CircleShape
+                                    )
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = "LIVE NSE MARKET",
+                                        color = TextPrimary,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.ExtraBold
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(4.dp))
+                                            .background(if (isAutoRefreshEnabled) BullishGreenBg else NeutralBlueBg)
+                                            .padding(horizontal = 5.dp, vertical = 2.dp)
+                                    ) {
+                                        Text(
+                                            text = if (isAutoRefreshEnabled) "STREAMING" else "PAUSED",
+                                            color = if (isAutoRefreshEnabled) BullishGreen else NeutralBlue,
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                                Text(
+                                    text = if (lastLiveUpdateTime.isNotEmpty()) "Last synced: $lastLiveUpdateTime" else "Auto-fetching live NSE quotes",
+                                    color = TextSecondary,
+                                    fontSize = 11.sp
+                                )
+                            }
+                        }
+
+                        // Auto-Refresh Switch
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "Auto",
+                                color = if (isAutoRefreshEnabled) PrimaryCyan else TextMuted,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Switch(
+                                checked = isAutoRefreshEnabled,
+                                onCheckedChange = { onToggleAutoRefresh(it) },
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = Color.Black,
+                                    checkedTrackColor = PrimaryCyan,
+                                    uncheckedThumbColor = TextMuted,
+                                    uncheckedTrackColor = NavySurfaceVariant
+                                ),
+                                modifier = Modifier.testTag("auto_refresh_toggle")
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Secondary Live Controls Row: Countdown, Interval Selector, and Refresh Now Button
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Countdown / Interval Chips
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            if (isAutoRefreshEnabled) {
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(PrimaryCyan.copy(alpha = 0.15f))
+                                        .border(1.dp, PrimaryCyan.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
+                                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                                ) {
+                                    Text(
+                                        text = "⚡ In ${secondsUntilNextRefresh}s",
+                                        color = PrimaryCyan,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+
+                            // Interval pickers
+                            listOf(30, 60, 120).forEach { sec ->
+                                val isSelected = refreshIntervalSeconds == sec
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(if (isSelected) PrimaryCyan else NavySurfaceVariant)
+                                        .border(1.dp, if (isSelected) PrimaryCyan else NavyCardBorder, RoundedCornerShape(8.dp))
+                                        .clickable { onSetRefreshInterval(sec) }
+                                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                                ) {
+                                    Text(
+                                        text = "${sec}s",
+                                        color = if (isSelected) Color.Black else TextSecondary,
+                                        fontSize = 10.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                                    )
+                                }
+                            }
+                        }
+
+                        // Manual Refresh Button
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(NavySurfaceVariant)
+                                .border(1.dp, NavyCardBorder, RoundedCornerShape(8.dp))
+                                .clickable(enabled = !isLiveUpdating) { onRefreshLiveNow() }
+                                .padding(horizontal = 10.dp, vertical = 5.dp)
+                                .testTag("refresh_live_now_button")
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.Refresh,
+                                    contentDescription = "Refresh Live Feed",
+                                    tint = PrimaryCyan,
+                                    modifier = Modifier
+                                        .size(14.dp)
+                                        .rotate(if (isLiveUpdating) spinAngle else 0f)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = if (isLiveUpdating) "Updating..." else "Refresh Now",
+                                    color = PrimaryCyan,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+
+                    if (liveMarketStatus.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "• $liveMarketStatus",
+                            color = TextMuted,
+                            fontSize = 10.sp
+                        )
+                    }
+                }
+            }
+        }
+
+        // --- Major NSE Live Indices Ticker Row ---
+        if (liveIndices.isNotEmpty()) {
+            item {
+                Column {
+                    Text(
+                        text = "Major NSE Indices Live",
+                        color = TextSecondary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        items(liveIndices) { indexQuote ->
+                            LiveIndexCardItem(
+                                quote = indexQuote,
+                                onClick = { onSymbolClick(indexQuote.name) }
+                            )
+                        }
+                    }
+                }
+            }
+        }
 
         // Date Range Picker Component
         item {
@@ -376,14 +630,23 @@ fun DashboardScreen(
                 }
             }
 
-            // Market Breadth Component
+            // Market Sentiment & Bias Indicator (Advancing vs. Declining Algorithm)
             item {
-                MarketBreadthBar(
+                MarketSentimentIndicator(
                     advances = summary.advanceCount,
                     declines = summary.declineCount,
-                    unchanged = summary.unchangedCount
+                    unchanged = summary.unchangedCount,
+                    dateLabel = summary.date
                 )
             }
+        }
+
+        // NSE Market Status Card providing context for trend analysis
+        item {
+            NseMarketStatusCard(
+                lastFetchedTimestamp = lastLiveUpdateTime,
+                onRefreshRequested = onRefreshLiveNow
+            )
         }
 
         // Stock Performance Trend Line Graph Card
@@ -433,19 +696,29 @@ fun DashboardScreen(
                         }
                     }
 
-                    if (isDateRangeActive) {
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(PrimaryCyan.copy(alpha = 0.15f))
-                                .padding(horizontal = 8.dp, vertical = 4.dp)
-                        ) {
-                            Text(
-                                text = "📅 Range Active",
-                                color = PrimaryCyan,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold
-                            )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        NseMarketStatusBadge(
+                            timestamp = lastLiveUpdateTime,
+                            showTime = false
+                        )
+
+                        if (isDateRangeActive) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(PrimaryCyan.copy(alpha = 0.15f))
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    text = "📅 Range Active",
+                                    color = PrimaryCyan,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
                         }
                     }
                 }
@@ -774,6 +1047,147 @@ fun DashboardScreen(
                             )
                         }
                     }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(NavySurfaceVariant)
+                            .clickable { onNavigateToGainersLosers() }
+                            .padding(vertical = 10.dp, horizontal = 12.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Leaderboard, contentDescription = null, tint = AccentGold, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Open Full Gainers & Losers Page (Date & Company Filters) →",
+                                color = AccentGold,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // New Listed Companies & IPO Buzz Section
+        if (newListingsNews.isNotEmpty()) {
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("dashboard_new_listings_news_card"),
+                    colors = CardDefaults.cardColors(containerColor = NavySurface),
+                    border = CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(NavyCardBorder)),
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(PrimaryCyan.copy(alpha = 0.15f))
+                                        .padding(horizontal = 6.dp, vertical = 3.dp)
+                                ) {
+                                    Text("🚀 NEW LISTINGS", color = PrimaryCyan, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                }
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "IPO & Debut News",
+                                    color = TextPrimary,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+
+                            Text(
+                                text = "All News (${newListingsNews.size}) →",
+                                color = PrimaryCyan,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.clickable { onNavigateToNews() }
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Horizontal Cards for Recent Listing News
+                        LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            items(newListingsNews.take(4)) { newsItem ->
+                                Box(
+                                    modifier = Modifier
+                                        .width(260.dp)
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(NavySurfaceVariant)
+                                        .border(1.dp, NavyCardBorder, RoundedCornerShape(12.dp))
+                                        .clickable { onNavigateToNews() }
+                                        .padding(12.dp)
+                                ) {
+                                    Column {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = newsItem.symbol,
+                                                color = PrimaryCyan,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                            if (newsItem.listingGainPct != 0.0) {
+                                                Text(
+                                                    text = "${if (newsItem.listingGainPct >= 0) "+" else ""}${String.format("%.1f", newsItem.listingGainPct)}%",
+                                                    color = if (newsItem.listingGainPct >= 0) BullishGreen else BearishRed,
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                        }
+
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = newsItem.headline,
+                                            color = TextPrimary,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            maxLines = 2,
+                                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                            lineHeight = 16.sp
+                                        )
+
+                                        Spacer(modifier = Modifier.height(6.dp))
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Text(
+                                                text = newsItem.source,
+                                                color = TextMuted,
+                                                fontSize = 9.sp
+                                            )
+                                            Text(
+                                                text = newsItem.publishDate,
+                                                color = TextMuted,
+                                                fontSize = 9.sp
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1029,6 +1443,97 @@ fun InsightCardItem(
                     fontSize = 11.sp,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.clickable { onSymbolClick(sym) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun LiveIndexCardItem(
+    quote: LiveIndexQuote,
+    onClick: () -> Unit
+) {
+    val isUp = quote.changePct >= 0
+    val changeColor = if (isUp) BullishGreen else BearishRed
+    val changeBg = if (isUp) BullishGreenBg else BearishRedBg
+
+    Card(
+        modifier = Modifier
+            .width(170.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .clickable { onClick() }
+            .testTag("live_index_${quote.name.replace(" ", "_").lowercase()}"),
+        colors = CardDefaults.cardColors(containerColor = NavySurface),
+        border = CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(NavyCardBorder)),
+        shape = RoundedCornerShape(14.dp)
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = quote.name,
+                    color = TextPrimary,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(changeBg)
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        text = "${if (isUp) "+" else ""}${String.format("%.2f", quote.changePct)}%",
+                        color = changeColor,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            Text(
+                text = String.format("%,.2f", quote.currentPrice),
+                color = TextPrimary,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.ExtraBold
+            )
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = if (isUp) Icons.Default.TrendingUp else Icons.Default.TrendingDown,
+                        contentDescription = null,
+                        tint = changeColor,
+                        modifier = Modifier.size(12.dp)
+                    )
+                    Spacer(modifier = Modifier.width(3.dp))
+                    Text(
+                        text = "${if (isUp) "+" else ""}${String.format("%.2f", quote.change)}",
+                        color = changeColor,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+
+                Text(
+                    text = "H:${String.format("%.0f", quote.high)}",
+                    color = TextMuted,
+                    fontSize = 9.sp
                 )
             }
         }

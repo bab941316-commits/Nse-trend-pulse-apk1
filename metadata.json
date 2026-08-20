@@ -1,6 +1,6 @@
 {
-  "name": "NSE Market Analytics",
-  "description": "Read NSE CSV market files, analyze stock performance by date, and track insights in an interactive dashboard.",
+  "name": "NSE Analytics",
+  "description": "NSE market analytics with automatic live NSE data streaming, date trends, top gainers & losers, new listed company news, CSV import, watchlists, and insights.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
